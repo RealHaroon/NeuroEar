@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>NeuroEar</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">Neuro<span class="accent">Ear</span><span class="tagline">how a neural network hears</span></div>
+        <div class="try"><span class="try-label">Try saying:</span><div id="try-words" class="try-words"></div></div>
+        <div class="badges">
+          <span id="rec-badge" class="rec-badge hidden"></span>
+          <span id="verify" class="verify"></span>
+          <span id="status" class="status"></span>
+        </div>
+      </header>
+
+      <main class="pipeline">
+        <section class="panel" id="stage-mic">
+          <h2><span class="num">1</span>Microphone</h2>
+          <div class="sublabel">waveform · air pressure over time</div>
+          <div class="canvas-wrap grow"><canvas id="wave"></canvas><div id="wave-window" class="sel-window hidden"></div></div>
+          <div class="sublabel">volume</div>
+          <div class="meter"><div id="meter-fill"></div></div>
+          <div id="no-audio" class="banner hidden">No audio detected — is the mic muted?</div>
+          <button id="rec-btn" class="rec-btn" data-mode="idle">● Record</button>
+          <div id="rec-time" class="rec-time"></div>
+        </section>
+
+        <div class="arrow">›</div>
+
+        <section class="panel" id="stage-spec">
+          <h2><span class="num">2</span>Spectrogram</h2>
+          <div class="sublabel">your recording · 0–5 kHz · <span class="accent">▭ 1 s the network used</span></div>
+          <div class="canvas-wrap grow"><canvas id="spec-live" class="pixel"></canvas><div id="spec-window" class="sel-window hidden"></div></div>
+          <div class="sublabel"><b>the image of sound</b> <span id="input-word" class="accent"></span></div>
+          <div class="canvas-wrap grow2"><canvas id="spec-input" class="pixel"></canvas></div>
+          <div class="axis"><span>time →</span><span id="input-dims"></span></div>
+        </section>
+
+        <div class="arrow">›</div>
+
+        <section class="panel network" id="stage-net">
+          <h2><span class="num">3</span>Neural network <span id="net-summary" class="h-note"></span></h2>
+          <div id="net3d"><div id="tooltip" class="tooltip hidden"></div></div>
+          <div class="net-hint">drag to rotate · scroll to zoom · double-click to reset · hover a layer</div>
+        </section>
+
+        <div class="arrow">›</div>
+
+        <section class="panel" id="stage-out">
+          <h2><span class="num">4</span>Output</h2>
+          <div id="word" class="word">—</div>
+          <div id="conf" class="conf"></div>
+          <div class="sublabel">softmax probabilities</div>
+          <div id="bars" class="bars"></div>
+          <div class="sublabel">history</div>
+          <div id="history" class="history"></div>
+        </section>
+      </main>
+
+      <footer>
+        <div id="caption" class="caption"></div>
+        <div class="keys">
+          <span><kbd>Space</kbd> record / recognize</span><span><kbd>←</kbd><kbd>→</kbd> step through</span><span><kbd>F</kbd> fullscreen</span>
+          <span><kbd>R</kbd> reset</span><span><kbd>H</kbd> captions</span><span><kbd>D</kbd> 2D layers</span>
+        </div>
+      </footer>
+    </div>
+
+    <div id="layers2d" class="layers2d hidden"></div>
+
+    <div id="start" class="start">
+      <div class="start-card">
+        <div class="start-title">Neuro<span class="accent">Ear</span></div>
+        <p class="start-sub">Record a word, then watch a convolutional neural network recognize it — layer by layer.</p>
+        <button id="start-btn" class="start-btn">🎙 Enable microphone</button>
+        <p id="start-status" class="start-status">Loading neural network…</p>
+        <div id="start-error" class="start-error hidden"></div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
