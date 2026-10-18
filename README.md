@@ -80,20 +80,31 @@ Pool, Flatten, Dropout and Dense layer → Softmax → Prediction. Each step has
    - one frame every 1024 samples, keeping the first 232 bins (≈ 0–5 kHz).
 
    This was checked against a real AnalyserNode and matches to within 0.001 dB (`src/spectrum.js`).
-2. **Finding the word.** The network hears exactly 1 second (43 frames). The app slides a
-   1-second window over the whole recording in steps of 2 frames and normalizes each window the
-   way the library does. The library's own `recognizer.recognize()` then scores all windows in one
-   batch. The window where a real word is most likely is the one shown, and it is outlined in
-   orange on the waveform and the spectrogram. A word counts as recognized at ≥ **0.75**
-   probability (`PROBABILITY_THRESHOLD` in `src/main.js`). Below that, the app says it is not sure.
-3. **Activations.** The recognizer's `tf.LayersModel` is `recognizer.model`. The app falls back to
+2. **Finding the word.** The network hears exactly 1 second (43 frames). The app finds the
+   speech in the recording: loud stretches separated by less than 0.2 s count as one utterance,
+   and the loudest utterance wins. The 1-second window is centered on it and outlined in orange on
+   the waveform and the spectrogram. The library's own `recognizer.recognize()` classifies it.
+3. **Saying "unknown".** The model always picks one of its 20 classes and is often over-confident
+   on words it has never heard. A command word is only accepted when **all** of these hold
+   (`ACCEPT` in `src/recognizer.js`):
+   - the network's top class is a command word, with ≥ 90 % probability;
+   - the same word stays at ≥ 75 % on average when the window is shifted by ±70 ms and ±140 ms
+     (real words are stable; false matches usually flip);
+   - the speech lasts no longer than 1.2 s (longer means a phrase, not a command word).
+
+   Otherwise the result is **unknown** or **noise**, and the app shows the reason. In tests with
+   synthesized speech (2 voices), this cut false accepts of non-command words from 44/44 to 5/44,
+   with no command word ever reported as a *different* command. It can't be perfect: words that
+   sound like a command (tree → "three", green → "three") still get through, because the network
+   is 100 % sure and stays sure when the window is shifted.
+4. **Activations.** The recognizer's `tf.LayersModel` is `recognizer.model`. The app falls back to
    `tf.loadLayersModel` if that property is missing. `model.summary()` is printed to the console. An
    activation model, `tf.model({ inputs, outputs: model.layers.map(l => l.output) })`, receives the
    same 1-second window that the recognizer classified. The window is z-score normalized exactly
    as `browser_fft_utils.normalize()` does it: `(x − mean) / (√variance + ε)`.
-4. **Verification.** The output of the last layer is compared with the scores from `recognizer.recognize()`. The header badge
+5. **Verification.** The output of the last layer is compared with the scores from `recognizer.recognize()`. The header badge
    shows the result, for example `✓ activations verified (Δ 0e+0)`, and so does the console.
-5. **Visualization.** The visualization is built from each layer's class name and output shape,
+6. **Visualization.** The visualization is built from each layer's class name and output shape,
    nothing is hard-coded:
    - 4D outputs (Conv2D, MaxPooling2D) become columns of feature-map tiles. Each layer shows at most
      its 8 most active channels, downsampled to 43 × 64.

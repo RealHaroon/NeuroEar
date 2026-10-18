@@ -42,27 +42,21 @@ export class OutputPanel {
     this.confEl.textContent = 'listening';
   }
 
-  /** `confident` = above the probability threshold and a real word. */
-  showResult(word, score, confident) {
+  /** Show the app's decision: an accepted command word, or "unknown" / "noise" with the reason. */
+  showResult(d) {
     this.wordEl.classList.remove('pop');
     void this.wordEl.offsetWidth; // restart the CSS animation
     this.wordEl.classList.add('pop');
-    this.wordEl.classList.toggle('unknown', !confident);
-    if (word === LABEL_NOISE) {
-      this.wordEl.textContent = '—';
-      this.confEl.textContent = 'No word heard — try again, a bit louder';
-    } else if (word === LABEL_UNKNOWN) {
-      this.wordEl.textContent = '?';
-      this.confEl.textContent = `Not one of the 18 words (“unknown” ${Math.round(score * 100)}%)`;
-    } else if (!confident) {
-      this.wordEl.textContent = '?';
-      this.confEl.textContent = `Not sure — best guess “${prettyLabel(word)}” (${Math.round(score * 100)}%)`;
-    } else {
-      this.wordEl.textContent = prettyLabel(word);
-      this.confEl.textContent = `${(score * 100).toFixed(1)}% confident`;
-      this.history.unshift(word);
+    this.wordEl.classList.toggle('unknown', !d.accepted);
+    if (d.accepted) {
+      this.wordEl.textContent = prettyLabel(d.word);
+      this.confEl.textContent = `${(d.prob * 100).toFixed(1)}% confident`;
+      this.history.unshift(d.word);
       this.history.length = Math.min(this.history.length, HISTORY_SIZE);
       this.renderHistory();
+    } else {
+      this.wordEl.textContent = d.kind; // "unknown" or "noise"
+      this.confEl.textContent = d.reason.charAt(0).toUpperCase() + d.reason.slice(1);
     }
   }
 

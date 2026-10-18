@@ -5,14 +5,13 @@ import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/700.css';
 import './style.css';
 
-import { loadModel, computeActivations, classifyRecording, prettyLabel, LABEL_NOISE, LABEL_UNKNOWN } from './recognizer.js';
+import { loadModel, computeActivations, classifyRecording, prettyLabel } from './recognizer.js';
 import { Recorder, drawInputHeatmap, SAMPLE_RATE } from './audio.js';
 import { OutputPanel } from './output.js';
 import { Network3D } from './network3d.js';
 import { Layers2D } from './layers2d.js';
 import { Presenter } from './presenter.js';
 
-const PROBABILITY_THRESHOLD = 0.75; // below this the app says "not sure"
 const MAX_RECORD_SECONDS = 3; // recording stops (and is recognized) automatically after this
 const SILENCE_RMS = 0.004; // quieter than this for the whole recording = "no audio detected"
 const FRAME_SIZE = 1024;
@@ -197,7 +196,7 @@ async function toggleRecording() {
   }
 }
 
-/** Find the best 1-second window in the recording, then run it through the whole pipeline. */
+/** Classify the 1-second window around the speech, then run it through the whole pipeline. */
 async function recognizeFrames(recordedFrames, samples) {
   const F = ctx.inputShape[1], B = ctx.inputShape[2];
   const r = await classifyRecording(ctx, recordedFrames);
@@ -211,23 +210,20 @@ async function recognizeFrames(recordedFrames, samples) {
   verify.textContent = maxDiff < 1e-4 ? `✓ activations verified (Δ ${maxDiff.toExponential(0)})` : `✗ activation mismatch Δ ${maxDiff.toExponential(1)}`;
   verify.className = `verify ${maxDiff < 1e-4 ? 'ok' : 'bad'}`;
 
-  let best = 0;
-  for (let i = 1; i < r.scores.length; i++) if (r.scores[i] > r.scores[best]) best = i;
-  const word = ctx.words[best];
-  const score = r.scores[best];
-  const confident = score >= PROBABILITY_THRESHOLD && word !== LABEL_NOISE && word !== LABEL_UNKNOWN;
-  last = { word, score, confident, scores: Float32Array.from(r.scores), acts };
+  const d = r.decision;
+  const best = ctx.words.indexOf(d.word);
+  last = { word: d.word, score: d.prob, decision: d, scores: Float32Array.from(r.scores), acts };
 
   // Pad the waveform like the frames were padded, so the highlighted window lines up.
   const padded = new Float32Array(r.frames.length * FRAME_SIZE);
   padded.set(samples.subarray(0, Math.min(samples.length, padded.length - r.padBefore * FRAME_SIZE)), r.padBefore * FRAME_SIZE);
   recorder.showRecording(r.frames, padded, r.windowStart, r.windowLen);
   drawInputHeatmap($('spec-input'), acts[0].data, F, B);
-  $('input-word').textContent = `“${prettyLabel(word)}”`;
-  $('rec-time').textContent = `${((recordedFrames.length * FRAME_SIZE) / SAMPLE_RATE).toFixed(1)} s recorded · best of ${r.numWindows} one-second windows`;
+  $('input-word').textContent = d.accepted ? `“${prettyLabel(d.word)}”` : `(${d.kind})`;
+  $('rec-time').textContent = `${((recordedFrames.length * FRAME_SIZE) / SAMPLE_RATE).toFixed(1)} s recorded · 1 s window centred on your speech`;
 
-  output.updateScores(r.scores, best);
-  output.showResult(word, score, confident);
+  output.updateScores(r.scores, d.accepted ? best : -1);
+  output.showResult(d);
   network.play(acts);
   layers2d.update(acts, maxDiff);
   presenter.showResultCaption();

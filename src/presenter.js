@@ -115,7 +115,8 @@ export class Presenter {
     let detail = stage.detail;
     if (stage.prediction) {
       const last = this.getLast();
-      detail = last ? `“${prettyLabel(last.word)}” with ${(last.score * 100).toFixed(1)}% probability` : null;
+      const d = last?.decision;
+      detail = !d ? null : d.accepted ? `“${prettyLabel(d.word)}” with ${(d.prob * 100).toFixed(1)}% probability` : `but here the answer is “${d.kind}”: ${d.reason}`;
     }
     this.setCaption(stage.title, stage.text, detail, `${step + 1}/${this.stages.length}`);
   }
@@ -139,13 +140,12 @@ export class Presenter {
   showResultCaption() {
     const last = this.getLast();
     if (!last) return this.showIdleCaption();
-    const heard = last.confident
-      ? `the network heard “${prettyLabel(last.word)}”`
-      : last.word === '_background_noise_'
-        ? 'the network heard only background noise'
-        : last.word === '_unknown_'
-          ? 'the network thinks this is not one of its 18 words'
-          : `the network isn’t sure — best guess “${prettyLabel(last.word)}”`;
+    const d = last.decision;
+    const heard = d.accepted
+      ? `the network heard “${prettyLabel(d.word)}”`
+      : d.kind === 'noise'
+        ? `no command word — ${d.reason}`
+        : `not one of the 18 words — ${d.reason}`;
     this.setCaption('Result', heard, 'press → to walk through the pipeline · Space to record again');
   }
 }

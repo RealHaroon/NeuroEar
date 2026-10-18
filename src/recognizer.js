@@ -118,12 +118,61 @@ export async function computeActivations(ctx, spectrogramData) {
   return { acts, finalOutput: arrays[j] };
 }
 
-const WINDOW_STRIDE = 2; // frames between candidate 1-second windows (≈ 46 ms)
+// Open-set rejection. The model always picks one of its 20 classes and is often over-confident
+// on words it never heard, so a word is only accepted when all of these hold:
+export const ACCEPT = {
+  minProb: 0.9, // the classified window must be this sure
+  minShiftedProb: 0.75, // average probability of the same word when the window is nudged in time
+  maxSpeechSec: 1.2, // speech longer than this is not a single command word
+};
+const SHIFTS = [-6, -3, 0, 3, 6]; // frames (≈ 23 ms each) for the shift test
+const SPEECH_DB = 9; // a frame counts as speech when its energy is this far above the noise floor
+const MAX_GAP_FRAMES = 8; // pauses up to ≈ 0.19 s still belong to the same utterance
+const FRAME_SEC = 1024 / 44100;
+
+/** Mean power (dB) of one spectrogram frame. */
+function frameEnergyDb(frame) {
+  let p = 0;
+  for (let i = 0; i < frame.length; i++) p += 10 ** (frame[i] / 10);
+  return 10 * Math.log10(p / frame.length + 1e-30);
+}
 
 /**
- * The model hears exactly one second (43 frames). Slide that window over the whole recording,
- * score every window in one batch with the recognizer, and keep the one where a real word is
- * most likely.
+ * Where is the speech? Splits the recording into speech segments (gaps shorter than ~0.2 s are
+ * bridged, so a multi-word phrase stays one segment) and returns the loudest one as
+ * { start, end, centroid } in frame indices, or null for silence.
+ */
+function findSpeech(frames) {
+  const e = frames.map(frameEnergyDb);
+  const sorted = [...e].sort((a, b) => a - b);
+  const floor = sorted[Math.floor(sorted.length * 0.1)];
+  const peak = sorted[sorted.length - 1];
+  if (peak - floor < SPEECH_DB) return null;
+  const thr = Math.max(floor + SPEECH_DB, peak - 35);
+
+  const segments = [];
+  let cur = null;
+  e.forEach((v, i) => {
+    if (v <= thr) return;
+    if (cur && i - cur.end <= MAX_GAP_FRAMES) cur.end = i;
+    else segments.push((cur = { start: i, end: i }));
+  });
+  for (const seg of segments) {
+    seg.power = 0;
+    let csum = 0;
+    for (let i = seg.start; i <= seg.end; i++) {
+      const w = 10 ** ((e[i] - peak) / 10);
+      seg.power += w;
+      csum += w * i;
+    }
+    seg.centroid = csum / seg.power;
+  }
+  return segments.reduce((a, b) => (b.power > a.power ? b : a));
+}
+
+/**
+ * The model hears exactly one second (43 frames). Center that window on the speech in the
+ * recording, classify it, then check the answer survives small shifts in time.
  */
 export async function classifyRecording(ctx, recorded) {
   const [, F, B] = ctx.inputShape;
@@ -131,15 +180,15 @@ export async function classifyRecording(ctx, recorded) {
   let padBefore = 0;
   if (frames.length < F) {
     // Too short: pad both sides with the quietest frame we recorded.
-    const energy = (f) => f.reduce((a, v) => a + v, 0);
-    const quiet = frames.reduce((q, f) => (energy(f) < energy(q) ? f : q), frames[0]);
+    const quiet = frames.reduce((q, f) => (frameEnergyDb(f) < frameEnergyDb(q) ? f : q), frames[0]);
     padBefore = Math.floor((F - frames.length) / 2);
     frames = [...Array(padBefore).fill(quiet), ...frames, ...Array(F - frames.length - padBefore).fill(quiet)];
   }
 
-  const starts = [];
-  for (let s = 0; s + F <= frames.length; s += WINDOW_STRIDE) starts.push(s);
-  if (starts[starts.length - 1] !== frames.length - F) starts.push(frames.length - F);
+  const speech = findSpeech(frames);
+  const clampStart = (s) => Math.min(frames.length - F, Math.max(0, Math.round(s)));
+  const center = clampStart((speech ? speech.centroid : frames.length / 2) - F / 2);
+  const starts = SHIFTS.map((d) => clampStart(center + d));
 
   const flat = new Float32Array(starts.length * F * B);
   starts.forEach((s, w) => {
@@ -152,27 +201,42 @@ export async function classifyRecording(ctx, recorded) {
     const { mean, variance } = tf.moments(x, [1, 2, 3], true);
     return tf.div(tf.sub(x, mean), tf.add(tf.sqrt(variance), tf.backend().epsilon()));
   });
-  const { scores } = await ctx.recognizer.recognize(normalized);
+  const { scores: perWindow } = await ctx.recognizer.recognize(normalized);
   normalized.dispose();
-  const perWindow = starts.length === 1 ? [scores] : scores;
 
-  const realWords = ctx.words.map((w, i) => (w === LABEL_NOISE || w === LABEL_UNKNOWN ? -1 : i)).filter((i) => i >= 0);
-  let best = 0, bestScore = -1;
-  perWindow.forEach((sc, w) => {
-    const m = Math.max(...realWords.map((i) => sc[i]));
-    if (m > bestScore) {
-      bestScore = m;
-      best = w;
-    }
-  });
+  const mid = SHIFTS.indexOf(0);
+  const scores = perWindow[mid];
+  let top = 0;
+  for (let i = 1; i < scores.length; i++) if (scores[i] > scores[top]) top = i;
+  const word = ctx.words[top];
+  const prob = scores[top];
+  const shifted = perWindow.reduce((a, sc) => a + sc[top], 0) / perWindow.length;
+  const speechSec = speech ? (speech.end - speech.start + 1) * FRAME_SEC : 0;
+
+  let decision;
+  if (!speech || word === LABEL_NOISE) {
+    decision = { accepted: false, kind: 'noise', reason: speech ? 'the network hears only background noise' : 'no speech in the recording' };
+  } else if (word === LABEL_UNKNOWN) {
+    decision = { accepted: false, kind: 'unknown', reason: `the network itself says “unknown” (${Math.round(prob * 100)}%)` };
+  } else if (speechSec > ACCEPT.maxSpeechSec) {
+    decision = { accepted: false, kind: 'unknown', reason: `${speechSec.toFixed(1)} s of speech is longer than one command word` };
+  } else if (prob < ACCEPT.minProb) {
+    decision = { accepted: false, kind: 'unknown', reason: `closest word “${word}” is only ${Math.round(prob * 100)}% likely` };
+  } else if (shifted < ACCEPT.minShiftedProb) {
+    decision = { accepted: false, kind: 'unknown', reason: `looked like “${word}”, but changed when the window shifted (${Math.round(shifted * 100)}% on average)` };
+  } else {
+    decision = { accepted: true, kind: 'word', reason: `${Math.round(prob * 100)}% · stable when shifted (${Math.round(shifted * 100)}%)` };
+  }
+  Object.assign(decision, { word, prob, shifted, speechSec });
 
   return {
     frames,
     padBefore,
-    windowStart: starts[best],
+    windowStart: center,
     windowLen: F,
-    windowData: flat.slice(best * F * B, (best + 1) * F * B),
-    scores: perWindow[best],
-    numWindows: starts.length,
+    windowData: flat.slice(mid * F * B, (mid + 1) * F * B),
+    scores,
+    decision,
+    speech,
   };
 }
