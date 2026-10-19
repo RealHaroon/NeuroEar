@@ -10,6 +10,60 @@ const FRAME_SIZE = 1024;
 const FFT_SIZE = FRAME_SIZE * 2;
 const DB_FLOOR = -160; // digital silence would be -Infinity
 
+/** Spectrogram frame i: the 2048 samples ending at 2048 + i·1024. */
+function frameAt(spectrum, samples, i, bins) {
+  const frame = spectrum(samples, FFT_SIZE + i * FRAME_SIZE, bins);
+  for (let b = 0; b < frame.length; b++) if (!(frame[b] > DB_FLOOR)) frame[b] = DB_FLOOR;
+  return frame;
+}
+
+/**
+ * Turn a whole clip into what a live recording of it would have produced:
+ * { frames, samples } with samples aligned to the frames (see Recorder.stop()).
+ */
+export function framesFromSamples(samples, bins, maxSeconds) {
+  const spectrum = createSpectrum(FFT_SIZE);
+  const maxFrames = Math.round((maxSeconds * SAMPLE_RATE) / FRAME_SIZE);
+  const frames = [];
+  while (frames.length < maxFrames && FFT_SIZE + frames.length * FRAME_SIZE <= samples.length) {
+    frames.push(frameAt(spectrum, samples, frames.length, bins));
+  }
+  return { frames, samples: samples.slice(FRAME_SIZE, FRAME_SIZE + frames.length * FRAME_SIZE) };
+}
+
+/** Decode any audio file and resample it to mono 44.1 kHz. */
+export async function decodeClip(arrayBuffer) {
+  const tmp = new OfflineAudioContext(1, 1, SAMPLE_RATE);
+  const decoded = await tmp.decodeAudioData(arrayBuffer);
+  const off = new OfflineAudioContext(1, Math.ceil(decoded.duration * SAMPLE_RATE), SAMPLE_RATE);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  return (await off.startRendering()).getChannelData(0);
+}
+
+/** 16-bit mono WAV file from 44.1 kHz float samples. */
+export function encodeWav(samples) {
+  const buf = new ArrayBuffer(44 + samples.length * 2);
+  const v = new DataView(buf);
+  const str = (o, t) => [...t].forEach((c, i) => v.setUint8(o + i, c.charCodeAt(0)));
+  str(0, 'RIFF');
+  v.setUint32(4, 36 + samples.length * 2, true);
+  str(8, 'WAVEfmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); // PCM
+  v.setUint16(22, 1, true); // mono
+  v.setUint32(24, SAMPLE_RATE, true);
+  v.setUint32(28, SAMPLE_RATE * 2, true);
+  v.setUint16(32, 2, true);
+  v.setUint16(34, 16, true);
+  str(36, 'data');
+  v.setUint32(40, samples.length * 2, true);
+  samples.forEach((x, i) => v.setInt16(44 + i * 2, Math.max(-1, Math.min(1, x)) * 0x7fff, true));
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
 /** Keeps a canvas' backing store matched to its CSS size (crisp on HiDPI / projector). */
 function fitCanvas(canvas, onResize) {
   const ro = new ResizeObserver(() => {
@@ -101,12 +155,16 @@ export class Recorder {
 
     // A new frame every 1024 samples, each looking at the latest 2048.
     while (FFT_SIZE + this.frames.length * FRAME_SIZE <= this.length) {
-      const frame = this.spectrum(this.samples, FFT_SIZE + this.frames.length * FRAME_SIZE, this.bins);
-      for (let b = 0; b < frame.length; b++) if (!(frame[b] > DB_FLOOR)) frame[b] = DB_FLOOR;
+      const frame = frameAt(this.spectrum, this.samples, this.frames.length, this.bins);
       this.frames.push(frame);
       this.drawSpecColumn(frame, this.frames.length - 1);
     }
     if (this.frames.length >= this.maxFrames) this.onMaxReached?.();
+  }
+
+  /** Everything recorded, as raw 44.1 kHz samples (for saving a demo clip). */
+  rawSamples() {
+    return this.samples.slice(0, this.length);
   }
 
   /** Waveform samples aligned with the frames: frame i ↔ samples of its newest 1024. */

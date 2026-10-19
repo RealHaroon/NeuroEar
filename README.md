@@ -52,6 +52,25 @@ Everything is bundled locally, so no CDN is used:
 
 **Check before you present:** run `npm run dev` once, turn off Wi‑Fi, reload the page and say a word.
 
+## Before the presentation
+
+1. **Calibrate** (button in the header, or **C**). Do this on the presentation laptop and, if you
+   can, in the room. The panel asks you to say each of the 18 words and 6 non-words, using
+   Space to record and Space again to recognize. It then shows how many words were accepted,
+   rejected or confused with the current thresholds, and suggests better ones. Among settings that
+   score equally, the suggestion picks the strictest, so it never loosens the thresholds without a
+   gain. **Apply suggested** saves the thresholds in this browser; **Reset to defaults** undoes it.
+2. **Record backup demo clips** in case the microphone or the room lets you down. Run
+   `npm run dev`, record a word, then click **💾 Save as demo clip**. The clip is saved as
+   `public/demo/<word>.wav`. Saved clips appear under *backup clips* in the microphone panel.
+   Press **1–9** (or click a clip) to play it out loud and run it through exactly the same
+   pipeline as a live recording. Saving and deleting clips only works with `npm run dev`; a built
+   app (`npm run build`) just plays the clips that are in `public/demo`. A clip of a non-word,
+   such as "banana", is a good way to show the network answering *unknown*.
+3. **Warm-up** happens on its own. While the start screen says *Warming up the neural network…*,
+   the model runs once on dummy data, so the GPU code is compiled before your first live word
+   rather than during it.
+
 ## Keyboard shortcuts (presenter mode)
 
 | key | action |
@@ -63,6 +82,8 @@ Everything is bundled locally, so no CDN is used:
 | **R** | Reset the history |
 | **H** | Hide or show the captions |
 | **D** | Toggle the 2D debug view of every layer, with the verification result |
+| **1–9** | Play backup demo clip 1–9 |
+| **C** | Open or close the calibration panel |
 
 Mouse controls in the 3D view: drag to rotate, scroll to zoom, hover over a layer to see its name,
 type and output shape, and double-click to reset the camera.

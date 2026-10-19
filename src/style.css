@@ -162,3 +162,40 @@ kbd { font-family: var(--body); font-size: 0.75rem; padding: 0.05rem 0.4rem; mar
 @keyframes rec-pulse { 70% { box-shadow: 0 0 0 14px rgba(229, 72, 77, 0); } }
 .rec-time { font-size: 0.78rem; color: var(--muted); text-align: center; min-height: 1.2em; }
 body.recording #stage-mic { border-color: #e5484d; }
+
+/* ---------------------------------------------------------------- demo clips */
+.save-clip { font-size: 0.78rem; padding: 0.35rem 0.5rem; border-radius: 8px; border: 1px dashed var(--orange); background: transparent; color: var(--orange); cursor: pointer; }
+.demo-clips { display: flex; flex-wrap: wrap; gap: 0.3rem; max-height: 6.5rem; overflow-y: auto; }
+.demo-chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.demo-chip button { font: inherit; font-size: 0.8rem; color: var(--text); background: rgba(141, 180, 255, 0.1); border: 0; padding: 0.15rem 0.5rem; cursor: pointer; }
+.demo-chip button:hover { background: rgba(255, 143, 82, 0.25); }
+.demo-chip kbd { margin-right: 0.3rem; font-size: 0.65rem; padding: 0 0.25rem; }
+.demo-chip .demo-del { color: var(--muted); padding: 0.15rem 0.4rem; background: transparent; }
+.demo-empty { font-size: 0.75rem; color: var(--muted); }
+
+/* ---------------------------------------------------------------- calibration */
+.cal-btn { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.7rem; border-radius: 999px; border: 1px solid var(--blue); background: transparent; color: var(--blue); cursor: pointer; }
+.calibration {
+  position: fixed; z-index: 30; top: 5.5rem; right: 1rem; bottom: 5.5rem; width: min(62vw, 58rem);
+  display: flex; flex-direction: column; gap: 0.7rem; padding: 1rem 1.2rem;
+  background: rgba(15, 22, 38, 0.97); border: 1px solid var(--blue); border-radius: 14px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+.cal-head { display: flex; justify-content: space-between; align-items: center; font-family: var(--head); font-size: 1.2rem; }
+.cal-x { font-size: 1.4rem; background: none; border: 0; color: var(--muted); cursor: pointer; }
+.cal-ask { font-family: var(--head); font-size: 2rem; }
+.cal-ask small { display: block; font-family: var(--body); font-size: 0.85rem; color: var(--muted); }
+.cal-buttons { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center; }
+.cal-buttons button { font: inherit; font-size: 0.85rem; padding: 0.3rem 0.8rem; border-radius: 8px; border: 1px solid var(--line); background: var(--panel); color: var(--text); cursor: pointer; }
+.cal-buttons button.primary { background: var(--orange); color: var(--bg); border-color: var(--orange); font-weight: 700; }
+.cal-buttons button:disabled { opacity: 0.4; cursor: default; }
+.cal-sep { flex: 1; }
+.calibration table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+.calibration th { text-align: left; color: var(--muted); font-weight: 500; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--line); }
+.calibration td { padding: 0.2rem 0.5rem; border-bottom: 1px solid rgba(141, 180, 255, 0.06); font-variant-numeric: tabular-nums; }
+.cal-sum tr:nth-child(3) td { color: var(--orange); font-weight: 700; }
+.cal-table { flex: 1; min-height: 0; overflow-y: auto; }
+.calibration tr.wrong td:last-child, .calibration tr.false-accept td:last-child { color: #ff7a7a; }
+.calibration tr.rejected td:last-child { color: var(--muted); }
+.calibration tr.ok td:last-child { color: #7ee0a1; }
+.calibration .dim { color: var(--muted); }
+.cal-note { font-size: 0.75rem; }

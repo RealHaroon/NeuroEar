@@ -120,11 +120,13 @@ export async function computeActivations(ctx, spectrogramData) {
 
 // Open-set rejection. The model always picks one of its 20 classes and is often over-confident
 // on words it never heard, so a word is only accepted when all of these hold:
-export const ACCEPT = {
+export const DEFAULT_ACCEPT = Object.freeze({
   minProb: 0.9, // the classified window must be this sure
   minShiftedProb: 0.75, // average probability of the same word when the window is nudged in time
   maxSpeechSec: 1.2, // speech longer than this is not a single command word
-};
+});
+/** The thresholds in use (calibration can change them). */
+export const ACCEPT = { ...DEFAULT_ACCEPT };
 const SHIFTS = [-6, -3, 0, 3, 6]; // frames (≈ 23 ms each) for the shift test
 const SPEECH_DB = 9; // a frame counts as speech when its energy is this far above the noise floor
 const MAX_GAP_FRAMES = 8; // pauses up to ≈ 0.19 s still belong to the same utterance
@@ -213,21 +215,7 @@ export async function classifyRecording(ctx, recorded) {
   const shifted = perWindow.reduce((a, sc) => a + sc[top], 0) / perWindow.length;
   const speechSec = speech ? (speech.end - speech.start + 1) * FRAME_SEC : 0;
 
-  let decision;
-  if (!speech || word === LABEL_NOISE) {
-    decision = { accepted: false, kind: 'noise', reason: speech ? 'the network hears only background noise' : 'no speech in the recording' };
-  } else if (word === LABEL_UNKNOWN) {
-    decision = { accepted: false, kind: 'unknown', reason: `the network itself says “unknown” (${Math.round(prob * 100)}%)` };
-  } else if (speechSec > ACCEPT.maxSpeechSec) {
-    decision = { accepted: false, kind: 'unknown', reason: `${speechSec.toFixed(1)} s of speech is longer than one command word` };
-  } else if (prob < ACCEPT.minProb) {
-    decision = { accepted: false, kind: 'unknown', reason: `closest word “${word}” is only ${Math.round(prob * 100)}% likely` };
-  } else if (shifted < ACCEPT.minShiftedProb) {
-    decision = { accepted: false, kind: 'unknown', reason: `looked like “${word}”, but changed when the window shifted (${Math.round(shifted * 100)}% on average)` };
-  } else {
-    decision = { accepted: true, kind: 'word', reason: `${Math.round(prob * 100)}% · stable when shifted (${Math.round(shifted * 100)}%)` };
-  }
-  Object.assign(decision, { word, prob, shifted, speechSec });
+  const decision = decide({ word, prob, shifted, speechSec, hasSpeech: !!speech });
 
   return {
     frames,
@@ -239,4 +227,43 @@ export async function classifyRecording(ctx, recorded) {
     decision,
     speech,
   };
+}
+
+/**
+ * Accept a command word, or explain why the answer is "unknown" / "noise".
+ * `stats` = { word, prob, shifted, speechSec, hasSpeech } from classifyRecording().
+ */
+export function decide(stats, accept = ACCEPT) {
+  const { word, prob, shifted, speechSec, hasSpeech } = stats;
+  let d;
+  if (!hasSpeech || word === LABEL_NOISE) {
+    d = { accepted: false, kind: 'noise', reason: hasSpeech ? 'the network hears only background noise' : 'no speech in the recording' };
+  } else if (word === LABEL_UNKNOWN) {
+    d = { accepted: false, kind: 'unknown', reason: `the network itself says “unknown” (${Math.round(prob * 100)}%)` };
+  } else if (speechSec > accept.maxSpeechSec) {
+    d = { accepted: false, kind: 'unknown', reason: `${speechSec.toFixed(1)} s of speech is longer than one command word` };
+  } else if (prob < accept.minProb) {
+    d = { accepted: false, kind: 'unknown', reason: `closest word “${word}” is only ${Math.round(prob * 100)}% likely` };
+  } else if (shifted < accept.minShiftedProb) {
+    d = { accepted: false, kind: 'unknown', reason: `looked like “${word}”, but changed when the window shifted (${Math.round(shifted * 100)}% on average)` };
+  } else {
+    d = { accepted: true, kind: 'word', reason: `${Math.round(prob * 100)}% · stable when shifted (${Math.round(shifted * 100)}%)` };
+  }
+  return Object.assign(d, stats);
+}
+
+/**
+ * Run every model path once on dummy data so WebGL compiles its shaders now, not during the
+ * first live recognition. Returns the time it took in ms.
+ */
+export async function warmUp(ctx) {
+  const t0 = performance.now();
+  const [, F, B] = ctx.inputShape;
+  const x = tf.randomNormal([SHIFTS.length, F, B, 1]);
+  await ctx.recognizer.recognize(x);
+  x.dispose();
+  const spec = new Float32Array(F * B);
+  for (let i = 0; i < spec.length; i++) spec[i] = -90 + 40 * Math.random();
+  await computeActivations(ctx, spec);
+  return performance.now() - t0;
 }

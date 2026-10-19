@@ -46,8 +46,8 @@ export function buildStages(layers) {
 
 /** Keyboard-driven presenter mode: record/recognize, step through the pipeline, captions. */
 export class Presenter {
-  constructor({ layers, panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle }) {
-    Object.assign(this, { panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle });
+  constructor({ layers, panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate }) {
+    Object.assign(this, { panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate });
     this.stages = buildStages(layers);
     this.step = -1;
     this.captionsOn = true;
@@ -91,6 +91,12 @@ export class Presenter {
       case 'D':
         this.layers2d.toggle();
         break;
+      case 'c':
+      case 'C':
+        this.onCalibrate();
+        break;
+      default:
+        if (/^[1-9]$/.test(e.key)) this.onDigit(Number(e.key));
     }
   }
 

@@ -15,6 +15,7 @@
           <span id="rec-badge" class="rec-badge hidden"></span>
           <span id="verify" class="verify"></span>
           <span id="status" class="status"></span>
+          <button id="cal-btn" class="cal-btn" title="Calibrate thresholds (C)">Calibrate</button>
         </div>
       </header>
 
@@ -28,6 +29,9 @@
           <div id="no-audio" class="banner hidden">No audio detected — is the mic muted?</div>
           <button id="rec-btn" class="rec-btn" data-mode="idle">● Record</button>
           <div id="rec-time" class="rec-time"></div>
+          <button id="save-clip" class="save-clip hidden"></button>
+          <div class="sublabel">backup clips</div>
+          <div id="demo-clips" class="demo-clips"></div>
         </section>
 
         <div class="arrow">›</div>
@@ -66,12 +70,13 @@
         <div id="caption" class="caption"></div>
         <div class="keys">
           <span><kbd>Space</kbd> record / recognize</span><span><kbd>←</kbd><kbd>→</kbd> step through</span><span><kbd>F</kbd> fullscreen</span>
-          <span><kbd>R</kbd> reset</span><span><kbd>H</kbd> captions</span><span><kbd>D</kbd> 2D layers</span>
+          <span><kbd>R</kbd> reset</span><span><kbd>H</kbd> captions</span><span><kbd>D</kbd> 2D layers</span><span><kbd>1</kbd>–<kbd>9</kbd> demo clips</span><span><kbd>C</kbd> calibrate</span>
         </div>
       </footer>
     </div>
 
     <div id="layers2d" class="layers2d hidden"></div>
+    <div id="calibration" class="calibration hidden"></div>
 
     <div id="start" class="start">
       <div class="start-card">

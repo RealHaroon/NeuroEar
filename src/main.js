@@ -5,8 +5,10 @@ import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/700.css';
 import './style.css';
 
-import { loadModel, computeActivations, classifyRecording, prettyLabel } from './recognizer.js';
-import { Recorder, drawInputHeatmap, SAMPLE_RATE } from './audio.js';
+import { loadModel, warmUp, computeActivations, classifyRecording, prettyLabel } from './recognizer.js';
+import { Recorder, drawInputHeatmap, framesFromSamples, SAMPLE_RATE } from './audio.js';
+import { DemoClips, canSaveClips } from './demo.js';
+import { Calibration, loadSavedThresholds } from './calibration.js';
 import { OutputPanel } from './output.js';
 import { Network3D } from './network3d.js';
 import { Layers2D } from './layers2d.js';
@@ -23,9 +25,13 @@ const startStatus = $('start-status');
 const startError = $('start-error');
 const recBtn = $('rec-btn');
 
-let ctx, recorder, output, network, layers2d, presenter;
+let ctx, recorder, output, network, layers2d, presenter, demo, calibration;
 let state = 'idle'; // idle | recording | processing
 let last = null; // last result: { word, score, scores, acts }
+let lastRecording = null; // raw samples of the last mic recording, for "save as demo clip"
+const saveBtn = $('save-clip');
+
+loadSavedThresholds();
 
 function setStatus(text, cls = '') {
   const el = $('status');
@@ -40,8 +46,13 @@ function showStartError(title, body) {
   startBtn.textContent = 'Try again';
 }
 
-// Start loading the network immediately; audio has to wait for a click.
-const modelPromise = loadModel();
+// Start loading the network immediately (and compile its GPU shaders); audio has to wait for a click.
+const modelPromise = loadModel().then(async (c) => {
+  startStatus.textContent = 'Warming up the neural network…';
+  const ms = await warmUp(c);
+  console.log(`Warm-up (shader compilation) took ${Math.round(ms)} ms`);
+  return c;
+});
 modelPromise.then(
   (c) => (startStatus.textContent = `Neural network ready · ${c.model.layers.length} layers · ${c.model.countParams().toLocaleString()} parameters`),
   (err) => {
@@ -58,6 +69,8 @@ startBtn.addEventListener('click', start);
 recBtn.addEventListener('click', () => toggleRecording());
 // Keep keyboard focus off the button: otherwise Space would trigger both the shortcut and a click.
 recBtn.addEventListener('mousedown', (e) => e.preventDefault());
+saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
+saveBtn.addEventListener('click', saveDemoClip);
 
 async function start() {
   startBtn.disabled = true;
@@ -128,8 +141,14 @@ async function setupUI(stream) {
     getLast: () => last,
     canStep: () => state === 'idle' && last != null,
     onRecordToggle: () => toggleRecording(),
+    onDigit: (n) => demo.play(n - 1),
+    onCalibrate: () => calibration.toggle(),
   });
   presenter.showIdleCaption();
+  demo = new DemoClips($('demo-clips'), { onPlay: playClip });
+  demo.load();
+  calibration = new Calibration($('calibration'), words);
+  $('cal-btn').addEventListener('click', () => calibration.toggle());
 
   const loop = () => {
     if (state === 'recording') {
@@ -142,7 +161,7 @@ async function setupUI(stream) {
   };
   requestAnimationFrame(loop);
 
-  window.__neuroear = { ctx, network, presenter, recorder, get last() { return last; }, toggleRecording, recognizeFrames };
+  window.__neuroear = { ctx, network, presenter, recorder, demo, calibration, get last() { return last; }, toggleRecording, recognizeFrames };
 }
 
 function showBanner(text) {
@@ -170,6 +189,7 @@ async function toggleRecording() {
     $('no-audio').classList.add('hidden');
     $('rec-time').textContent = '';
     setRecUI('recording');
+    saveBtn.classList.add('hidden');
     presenter.showRecordingCaption();
     setStatus('');
     await recorder.start();
@@ -178,11 +198,18 @@ async function toggleRecording() {
     setRecUI('processing');
     setStatus('recognizing…');
     const { frames, samples } = recorder.stop();
+    lastRecording = recorder.rawSamples();
     const silent = recorder.peakRms < SILENCE_RMS;
     $('no-audio').classList.add('hidden');
     try {
       if (frames.length === 0) throw new Error('No audio frames were captured.');
-      await recognizeFrames(frames, samples);
+      const d = await recognizeFrames(frames, samples);
+      calibration.addResult(d);
+      if (canSaveClips) {
+        saveBtn.dataset.name = d.accepted ? d.word : d.kind;
+        saveBtn.textContent = `💾 Save as demo clip “${saveBtn.dataset.name}”`;
+        saveBtn.classList.remove('hidden');
+      }
       if (silent) showBanner('No audio detected — is the mic muted?');
     } catch (err) {
       console.error(err);
@@ -227,4 +254,54 @@ async function recognizeFrames(recordedFrames, samples) {
   network.play(acts);
   layers2d.update(acts, maxDiff);
   presenter.showResultCaption();
+  return d;
+}
+
+/** Play a backup demo clip out loud, then run it through exactly the same pipeline. */
+async function playClip(samples, file) {
+  if (state !== 'idle') return;
+  state = 'processing';
+  setRecUI('processing');
+  saveBtn.classList.add('hidden');
+  presenter.reset();
+  output.setRecording();
+  $('no-audio').classList.add('hidden');
+  presenter.setCaption('Demo clip', `playing ${file}`, null);
+  try {
+    const ac = recorder.ctx;
+    const buf = ac.createBuffer(1, samples.length, SAMPLE_RATE);
+    buf.copyToChannel(samples, 0);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    src.connect(ac.destination);
+    // Let the audience hear it first (with a fallback in case "ended" never fires).
+    await new Promise((resolve) => {
+      src.onended = resolve;
+      setTimeout(resolve, buf.duration * 1000 + 500);
+      src.start();
+    });
+    const clip = framesFromSamples(samples, ctx.inputShape[2], MAX_RECORD_SECONDS);
+    if (!clip.frames.length) throw new Error('clip is too short');
+    await recognizeFrames(clip.frames, clip.samples);
+    $('rec-time').textContent = `demo clip ${file}`;
+  } catch (err) {
+    console.error(err);
+    showBanner(`Demo clip failed: ${err.message}`);
+  } finally {
+    state = 'idle';
+    setRecUI('idle');
+  }
+}
+
+async function saveDemoClip() {
+  if (!lastRecording) return;
+  saveBtn.disabled = true;
+  try {
+    const file = await demo.save(lastRecording, saveBtn.dataset.name || 'clip');
+    saveBtn.textContent = `✓ saved public/demo/${file}`;
+  } catch (err) {
+    saveBtn.textContent = `✗ ${err.message}`;
+  } finally {
+    saveBtn.disabled = false;
+  }
 }
