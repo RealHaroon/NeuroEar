@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="author" content="Haroon Khan" />
+    <meta name="description" content="NeuroEar by Haroon Khan: record a spoken word and watch a convolutional neural network recognize it, layer by layer." />
+    <meta name="theme-color" content="#121a2b" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>NeuroEar</title>
   </head>
@@ -40,8 +43,8 @@
           <h2><span class="num">2</span>Spectrogram</h2>
           <div class="sublabel">your recording · 0–5 kHz · <span class="accent">▭ 1 s the network used</span></div>
           <div class="canvas-wrap grow"><canvas id="spec-live" class="pixel"></canvas><div id="spec-window" class="sel-window hidden"></div></div>
-          <div class="sublabel"><b>the image of sound</b> <span id="input-word" class="accent"></span></div>
-          <div class="canvas-wrap grow2"><canvas id="spec-input" class="pixel"></canvas></div>
+          <div class="sublabel sal-row"><b id="input-title">the image of sound</b> <span id="input-word" class="accent"></span><button id="sal-btn" class="sal-btn" title="Show which parts of the sound mattered most (S)" disabled>focus</button></div>
+          <div id="input-wrap" class="canvas-wrap grow2"><canvas id="spec-input" class="pixel"></canvas><canvas id="spec-saliency" class="saliency"></canvas></div>
           <div class="axis"><span>time →</span><span id="input-dims"></span></div>
         </section>
 
@@ -50,7 +53,7 @@
         <section class="panel network" id="stage-net">
           <h2><span class="num">3</span>Neural network <span id="net-summary" class="h-note"></span></h2>
           <div id="net3d"><div id="tooltip" class="tooltip hidden"></div></div>
-          <div class="net-hint">drag to rotate · scroll to zoom · double-click to reset · hover a layer</div>
+          <div class="net-hint"><span class="hint-mouse">drag to rotate · scroll to zoom · double-click to reset · hover a layer</span><span class="hint-touch">drag to rotate · pinch to zoom · tap a layer for details</span></div>
         </section>
 
         <div class="arrow">›</div>
@@ -59,6 +62,7 @@
           <h2><span class="num">4</span>Output</h2>
           <div id="word" class="word">—</div>
           <div id="conf" class="conf"></div>
+          <div id="shift-test" class="shift-test"></div>
           <div class="sublabel">softmax probabilities</div>
           <div id="bars" class="bars"></div>
           <div class="sublabel">history</div>
@@ -68,12 +72,22 @@
 
       <footer>
         <div id="caption" class="caption"></div>
-        <div class="keys">
-          <span><kbd>Space</kbd> record / recognize</span><span><kbd>←</kbd><kbd>→</kbd> step through</span><span><kbd>F</kbd> fullscreen</span>
-          <span><kbd>R</kbd> reset</span><span><kbd>H</kbd> captions</span><span><kbd>D</kbd> 2D layers</span><span><kbd>1</kbd>–<kbd>9</kbd> demo clips</span><span><kbd>C</kbd> calibrate</span>
+        <div class="footer-side">
+          <div class="keys">
+            <span><kbd>Space</kbd> record / recognize</span><span><kbd>←</kbd><kbd>→</kbd> / clicker step through</span><span><kbd>F</kbd> fullscreen</span>
+            <span><kbd>R</kbd> reset</span><span><kbd>H</kbd> captions</span><span><kbd>D</kbd> 2D layers</span><span><kbd>1</kbd>–<kbd>9</kbd> demo clips</span><span><kbd>C</kbd> calibrate</span><span><kbd>S</kbd> focus map</span>
+          </div>
+          <div class="credit">Created by <a href="https://github.com/RealHaroon" target="_blank" rel="noopener">Haroon Khan</a></div>
         </div>
       </footer>
     </div>
+
+    <nav id="mobile-bar" class="mobile-bar" aria-label="Controls">
+      <button data-mobile="prev" aria-label="Previous step" disabled>◀</button>
+      <button data-mobile="record" class="mb-record">● Record</button>
+      <button data-mobile="next" aria-label="Next step" disabled>▶</button>
+      <button data-mobile="focus" class="mb-focus" disabled>focus</button>
+    </nav>
 
     <div id="layers2d" class="layers2d hidden"></div>
     <div id="calibration" class="calibration hidden"></div>
@@ -85,6 +99,7 @@
         <button id="start-btn" class="start-btn">🎙 Enable microphone</button>
         <p id="start-status" class="start-status">Loading neural network…</p>
         <div id="start-error" class="start-error hidden"></div>
+        <p class="start-credit">Created by <a href="https://github.com/RealHaroon" target="_blank" rel="noopener">Haroon Khan</a></p>
       </div>
     </div>
 

@@ -87,8 +87,16 @@ export class Network3D {
     this.hover = -1;
     this.raycaster = new THREE.Raycaster();
     this.pointer = new THREE.Vector2();
-    this.renderer.domElement.addEventListener('pointermove', (e) => this.onPointer(e));
-    this.renderer.domElement.addEventListener('pointerleave', () => this.setHover(-1));
+    // Mouse: hover shows layer details. Touch: a tap shows them (a drag rotates instead), and
+    // touch pointers "leave" as soon as the finger lifts, so leave only counts for the mouse.
+    const el = this.renderer.domElement;
+    el.addEventListener('pointermove', (e) => e.pointerType === 'mouse' && this.onPointer(e));
+    el.addEventListener('pointerleave', (e) => e.pointerType === 'mouse' && this.setHover(-1));
+    el.addEventListener('pointerdown', (e) => (this.tapStart = { x: e.clientX, y: e.clientY }));
+    el.addEventListener('pointerup', (e) => {
+      if (e.pointerType === 'mouse' || !this.tapStart) return;
+      if (Math.hypot(e.clientX - this.tapStart.x, e.clientY - this.tapStart.y) < 10) this.onPointer(e);
+    });
     this.renderer.domElement.addEventListener('dblclick', () => this.goHome());
 
     new ResizeObserver(() => this.resize()).observe(container);

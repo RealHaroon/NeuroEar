@@ -4,8 +4,9 @@ const HISTORY_SIZE = 8;
 
 /** Softmax bars (live, sorted), the big winning word, confidence and history. */
 export class OutputPanel {
-  constructor(words, { bars, word, conf, history }) {
+  constructor(words, { bars, word, conf, history, shiftTest }) {
     this.words = words;
+    this.shiftEl = shiftTest;
     this.wordEl = word;
     this.confEl = conf;
     this.historyEl = history;
@@ -40,6 +41,7 @@ export class OutputPanel {
     this.wordEl.classList.add('unknown');
     this.wordEl.classList.remove('pop');
     this.confEl.textContent = 'listening';
+    this.shiftEl.innerHTML = '';
   }
 
   /** Show the app's decision: an accepted command word, or "unknown" / "noise" with the reason. */
@@ -58,6 +60,18 @@ export class OutputPanel {
       this.wordEl.textContent = d.kind; // "unknown" or "noise"
       this.confEl.textContent = d.reason.charAt(0).toUpperCase() + d.reason.slice(1);
     }
+  }
+
+  /** The 1-second window nudged earlier/later: does the network still hear the same thing? */
+  showShiftTest(shifts, mainWord) {
+    const cells = shifts
+      .map((sh) => {
+        const same = sh.word === mainWord;
+        const ms = sh.ms === 0 ? 'centre' : `${sh.ms > 0 ? '+' : '−'}${Math.abs(sh.ms)} ms`;
+        return `<div class="shift-cell ${same ? 'same' : 'diff'}${sh.ms === 0 ? ' centre' : ''}"><span class="ms">${ms}</span><b>${prettyLabel(sh.word)}</b><span>${Math.round(sh.prob * 100)}%</span></div>`;
+      })
+      .join('');
+    this.shiftEl.innerHTML = `<div class="sublabel">shift test · window nudged in time</div><div class="shift-cells">${cells}</div>`;
   }
 
   renderHistory() {

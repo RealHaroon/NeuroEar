@@ -67,7 +67,15 @@ export async function loadModel() {
   const last = layers[layers.length - 1];
   last.isOutput = true;
 
-  return { recognizer, model, actModel, inputShape, layers, words: recognizer.wordLabels(), backend: tf.getBackend(), memory: () => tf.memory() };
+  // For saliency: everything up to the last layer, plus that layer's weights, so we can take the
+  // gradient of a class's raw score (logit) — softmax saturates at 100% and kills the gradient.
+  const lastLayer = model.layers[model.layers.length - 1];
+  const head =
+    lastLayer.getClassName() === 'Dense' && model.layers.length > 1
+      ? { body: tf.model({ inputs: model.inputs, outputs: model.layers[model.layers.length - 2].output }), weights: lastLayer.getWeights() }
+      : null;
+
+  return { recognizer, model, actModel, head, inputShape, layers, words: recognizer.wordLabels(), backend: tf.getBackend(), memory: () => tf.memory() };
 }
 
 /** Same normalization as speech-commands' browser_fft_utils.normalize(): z-score with tf epsilon. */
@@ -208,6 +216,7 @@ export async function classifyRecording(ctx, recorded) {
 
   const mid = SHIFTS.indexOf(0);
   const scores = perWindow[mid];
+  const argmax = (sc) => sc.reduce((b, v, i) => (v > sc[b] ? i : b), 0);
   let top = 0;
   for (let i = 1; i < scores.length; i++) if (scores[i] > scores[top]) top = i;
   const word = ctx.words[top];
@@ -216,6 +225,14 @@ export async function classifyRecording(ctx, recorded) {
   const speechSec = speech ? (speech.end - speech.start + 1) * FRAME_SEC : 0;
 
   const decision = decide({ word, prob, shifted, speechSec, hasSpeech: !!speech });
+  // What each nudged window heard, for the shift-test display. Near the edge of the recording
+  // several shifts clamp to the same window; show each window once.
+  const shifts = perWindow
+    .map((sc, i) => {
+      const t = argmax(sc);
+      return { start: starts[i], ms: Math.round((starts[i] - center) * FRAME_SEC * 1000), word: ctx.words[t], prob: sc[t], probOfMain: sc[top] };
+    })
+    .filter((sh, i, all) => all.findIndex((o) => o.start === sh.start) === i);
 
   return {
     frames,
@@ -225,6 +242,7 @@ export async function classifyRecording(ctx, recorded) {
     windowData: flat.slice(mid * F * B, (mid + 1) * F * B),
     scores,
     decision,
+    shifts,
     speech,
   };
 }
@@ -252,6 +270,43 @@ export function decide(stats, accept = ACCEPT) {
   return Object.assign(d, stats);
 }
 
+const SALIENCY_SAMPLES = 16;
+const SALIENCY_NOISE = 0.15; // noise std as a fraction of the input's value range
+
+/**
+ * SmoothGrad saliency: how much each time-frequency cell of the (normalized) input changes the
+ * score of class `classIndex`. Gradients are averaged over noisy copies of the input to remove
+ * speckle. Returns a Float32Array [frames × bins] scaled to 0..1.
+ */
+export async function computeSaliency(ctx, spectrogramData, classIndex) {
+  const [, F, B, C] = ctx.inputShape;
+  const sal = tf.tidy(() => {
+    const xn = normalize(tf.tensor4d(spectrogramData, [1, F, B, C]));
+    const range = tf.sub(tf.max(xn), tf.min(xn));
+    const noisy = tf.add(tf.tile(xn, [SALIENCY_SAMPLES, 1, 1, 1]), tf.mul(tf.randomNormal([SALIENCY_SAMPLES, F, B, C]), tf.mul(range, SALIENCY_NOISE)));
+    let score;
+    if (ctx.head) {
+      const [kernel, bias] = ctx.head.weights;
+      const w = tf.slice(kernel, [0, classIndex], [-1, 1]);
+      const b = bias ? tf.slice(bias, [classIndex], [1]) : tf.scalar(0);
+      score = (x) => tf.sum(tf.add(tf.matMul(ctx.head.body.apply(x), w), b));
+    } else {
+      score = (x) => tf.sum(tf.slice(ctx.model.apply(x), [0, classIndex], [-1, 1]));
+    }
+    const g = tf.abs(tf.grad(score)(noisy)).mean([0, 3]); // [F, B]
+    // Light blur so the map shows regions rather than single pixels.
+    const blurred = tf.avgPool(g.reshape([1, F, B, 1]), [3, 3], 1, 'same').reshape([F * B]);
+    return blurred;
+  });
+  const data = await sal.data();
+  sal.dispose();
+  // Scale by the 99th percentile so one hot pixel doesn't wash everything else out.
+  const sorted = Float32Array.from(data).sort();
+  const p99 = sorted[Math.floor(sorted.length * 0.99)] || 1;
+  for (let i = 0; i < data.length; i++) data[i] = Math.min(1, data[i] / p99);
+  return data;
+}
+
 /**
  * Run every model path once on dummy data so WebGL compiles its shaders now, not during the
  * first live recognition. Returns the time it took in ms.
@@ -265,5 +320,6 @@ export async function warmUp(ctx) {
   const spec = new Float32Array(F * B);
   for (let i = 0; i < spec.length; i++) spec[i] = -90 + 40 * Math.random();
   await computeActivations(ctx, spec);
+  await computeSaliency(ctx, spec, 0);
   return performance.now() - t0;
 }

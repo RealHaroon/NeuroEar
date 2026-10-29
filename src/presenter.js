@@ -40,14 +40,22 @@ export function buildStages(layers) {
     }
     stages.push({ panels: ['net'], layer: i, ...s });
   });
+  stages.push({ panels: ['out'], title: 'Shift test', text: 'a real word stays the same when the 1-second window moves a little', detail: null, shiftTest: true });
   stages.push({ panels: ['out'], title: 'Prediction', text: 'the word with the highest probability wins', detail: null, prediction: true });
+  stages.push({
+    panels: ['spec'],
+    title: 'Attention',
+    text: 'the bright areas are where the sound mattered most for the answer',
+    detail: 'gradient of the answer’s score with respect to every input pixel (SmoothGrad)',
+    saliency: true,
+  });
   return stages;
 }
 
 /** Keyboard-driven presenter mode: record/recognize, step through the pipeline, captions. */
 export class Presenter {
-  constructor({ layers, panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate }) {
-    Object.assign(this, { panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate });
+  constructor({ layers, panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate, onSaliencyToggle, setStageSaliency }) {
+    Object.assign(this, { panels, captionEl, network, output, layers2d, getLast, canStep, onRecordToggle, onDigit, onCalibrate, onSaliencyToggle, setStageSaliency });
     this.stages = buildStages(layers);
     this.step = -1;
     this.captionsOn = true;
@@ -56,7 +64,9 @@ export class Presenter {
 
   onKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
-    switch (e.key) {
+    // Presentation clickers send PageDown / PageUp for "next" / "previous".
+    const key = { PageDown: 'ArrowRight', PageUp: 'ArrowLeft' }[e.key] ?? e.key;
+    switch (key) {
       case ' ':
       case 'Enter':
         e.preventDefault();
@@ -64,11 +74,11 @@ export class Presenter {
         break;
       case 'ArrowRight':
         e.preventDefault();
-        if (this.canStep()) this.goTo(Math.min(this.stages.length - 1, this.step + 1));
+        this.next();
         break;
       case 'ArrowLeft':
         e.preventDefault();
-        if (this.canStep() && this.step > 0) this.goTo(this.step - 1);
+        this.prev();
         break;
       case 'Escape':
         if (this.step >= 0) this.goTo(-1);
@@ -95,9 +105,21 @@ export class Presenter {
       case 'C':
         this.onCalibrate();
         break;
+      case 's':
+      case 'S':
+        this.onSaliencyToggle();
+        break;
       default:
         if (/^[1-9]$/.test(e.key)) this.onDigit(Number(e.key));
     }
+  }
+
+  next() {
+    if (this.canStep()) this.goTo(Math.min(this.stages.length - 1, this.step + 1));
+  }
+
+  prev() {
+    if (this.canStep() && this.step > 0) this.goTo(this.step - 1);
   }
 
   /** Leave step mode (if active) and restore all panels. */
@@ -112,17 +134,29 @@ export class Presenter {
       el.classList.toggle('active', !!stage && stage.panels.includes(name));
       el.classList.toggle('dimmed', !!stage && !stage.panels.includes(name));
     }
+    this.setStageSaliency(!!stage?.saliency);
     if (!stage) {
       this.network.focus(null);
       if (updateCaption) this.showResultCaption();
       return;
     }
     this.network.focus(stage.layer ?? null);
+    // On a phone the panels are stacked: bring the active one into view.
+    if (window.matchMedia('(max-width: 900px)').matches) {
+      this.panels[stage.panels[0]]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     let detail = stage.detail;
     if (stage.prediction) {
       const last = this.getLast();
       const d = last?.decision;
       detail = !d ? null : d.accepted ? `“${prettyLabel(d.word)}” with ${(d.prob * 100).toFixed(1)}% probability` : `but here the answer is “${d.kind}”: ${d.reason}`;
+    }
+    if (stage.shiftTest) {
+      const last = this.getLast();
+      if (last?.shifts) {
+        const agree = last.shifts.filter((sh) => sh.word === last.word).length;
+        detail = `${agree} of ${last.shifts.length} nudged windows agree on “${prettyLabel(last.word)}” (${Math.round(last.decision.shifted * 100)}% on average)`;
+      }
     }
     this.setCaption(stage.title, stage.text, detail, `${step + 1}/${this.stages.length}`);
   }

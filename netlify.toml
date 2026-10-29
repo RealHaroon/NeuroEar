@@ -1,0 +1,28 @@
+# Netlify: builds the Vite app and serves dist/ over HTTPS (needed for microphone access).
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  # Vite 8 needs Node 20.19+ or 22.12+.
+  NODE_VERSION = "22"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # Only this site may use the microphone; nothing else is requested.
+    Permissions-Policy = "microphone=(self), camera=(), geolocation=()"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# Hashed build assets never change.
+[[headers]]
+  for = "/assets/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Model weights (~5.7 MB) aren't hashed: cache for a day so repeat visits load instantly.
+[[headers]]
+  for = "/model/*"
+  [headers.values]
+    Cache-Control = "public, max-age=86400"

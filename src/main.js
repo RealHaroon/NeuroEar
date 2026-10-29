@@ -5,8 +5,8 @@ import '@fontsource/space-grotesk/500.css';
 import '@fontsource/space-grotesk/700.css';
 import './style.css';
 
-import { loadModel, warmUp, computeActivations, classifyRecording, prettyLabel } from './recognizer.js';
-import { Recorder, drawInputHeatmap, framesFromSamples, SAMPLE_RATE } from './audio.js';
+import { loadModel, warmUp, computeActivations, computeSaliency, classifyRecording, prettyLabel } from './recognizer.js';
+import { Recorder, drawInputHeatmap, drawSaliency, framesFromSamples, SAMPLE_RATE } from './audio.js';
 import { DemoClips, canSaveClips } from './demo.js';
 import { Calibration, loadSavedThresholds } from './calibration.js';
 import { OutputPanel } from './output.js';
@@ -30,6 +30,21 @@ let state = 'idle'; // idle | recording | processing
 let last = null; // last result: { word, score, scores, acts }
 let lastRecording = null; // raw samples of the last mic recording, for "save as demo clip"
 const saveBtn = $('save-clip');
+const salBtn = $('sal-btn');
+const mobileBar = $('mobile-bar');
+const mb = (name) => mobileBar.querySelector(`[data-mobile="${name}"]`);
+let saliencyByUser = false; // S key / "focus" button
+let saliencyByStage = false; // presenter's "Attention" step
+let saliencyToken = 0; // ignore results of a saliency pass that a newer recording overtook
+
+/** Show the saliency overlay when asked for (by the user or the presenter step) and available. */
+function applySaliency() {
+  const on = (saliencyByUser || saliencyByStage) && !!last?.saliency;
+  $('input-wrap').classList.toggle('show-sal', on);
+  salBtn.classList.toggle('on', on);
+  mb('focus').classList.toggle('on', on);
+  $('input-title').textContent = on ? 'the network’s focus' : 'the image of sound';
+}
 
 loadSavedThresholds();
 
@@ -71,6 +86,28 @@ recBtn.addEventListener('click', () => toggleRecording());
 recBtn.addEventListener('mousedown', (e) => e.preventDefault());
 saveBtn.addEventListener('mousedown', (e) => e.preventDefault());
 saveBtn.addEventListener('click', saveDemoClip);
+salBtn.addEventListener('mousedown', (e) => e.preventDefault());
+salBtn.addEventListener('click', toggleSaliency);
+function toggleSaliency() {
+  saliencyByUser = !saliencyByUser;
+  applySaliency();
+}
+
+// Bottom control bar on phones (no keyboard there).
+mobileBar.addEventListener('mousedown', (e) => e.preventDefault());
+mobileBar.addEventListener('click', (e) => {
+  const action = e.target.closest('[data-mobile]')?.dataset.mobile;
+  if (!presenter) return;
+  if (action === 'record') toggleRecording();
+  else if (action === 'prev') presenter.prev();
+  else if (action === 'next') presenter.next();
+  else if (action === 'focus') toggleSaliency();
+});
+
+function setSaliencyAvailable(available) {
+  salBtn.disabled = !available;
+  mb('focus').disabled = !available;
+}
 
 async function start() {
   startBtn.disabled = true;
@@ -128,7 +165,7 @@ async function setupUI(stream) {
     { bins: ctx.inputShape[2], maxSeconds: MAX_RECORD_SECONDS }
   );
   recorder.onMaxReached = () => state === 'recording' && toggleRecording();
-  output = new OutputPanel(words, { bars: $('bars'), word: $('word'), conf: $('conf'), history: $('history') });
+  output = new OutputPanel(words, { bars: $('bars'), word: $('word'), conf: $('conf'), history: $('history'), shiftTest: $('shift-test') });
   network = new Network3D($('net3d'), layers, words, $('tooltip'));
   layers2d = new Layers2D($('layers2d'), layers);
   presenter = new Presenter({
@@ -143,6 +180,11 @@ async function setupUI(stream) {
     onRecordToggle: () => toggleRecording(),
     onDigit: (n) => demo.play(n - 1),
     onCalibrate: () => calibration.toggle(),
+    onSaliencyToggle: toggleSaliency,
+    setStageSaliency: (on) => {
+      saliencyByStage = on;
+      applySaliency();
+    },
   });
   presenter.showIdleCaption();
   demo = new DemoClips($('demo-clips'), { onPlay: playClip });
@@ -174,6 +216,10 @@ function setRecUI(mode) {
   recBtn.dataset.mode = mode;
   recBtn.disabled = mode === 'processing';
   recBtn.textContent = { idle: '● Record', recording: '■ Recognize', processing: 'Thinking…' }[mode];
+  mb('record').dataset.mode = mode;
+  mb('record').disabled = mode === 'processing';
+  mb('record').textContent = recBtn.textContent;
+  mb('prev').disabled = mb('next').disabled = mode !== 'idle' || !last;
   const badge = $('rec-badge');
   badge.classList.toggle('hidden', mode !== 'recording');
   badge.textContent = '● recording';
@@ -239,7 +285,8 @@ async function recognizeFrames(recordedFrames, samples) {
 
   const d = r.decision;
   const best = ctx.words.indexOf(d.word);
-  last = { word: d.word, score: d.prob, decision: d, scores: Float32Array.from(r.scores), acts };
+  last = { word: d.word, score: d.prob, decision: d, shifts: r.shifts, scores: Float32Array.from(r.scores), acts };
+  applySaliency(); // hides the previous recording's overlay until the new one is ready
 
   // Pad the waveform like the frames were padded, so the highlighted window lines up.
   const padded = new Float32Array(r.frames.length * FRAME_SIZE);
@@ -251,10 +298,28 @@ async function recognizeFrames(recordedFrames, samples) {
 
   output.updateScores(r.scores, d.accepted ? best : -1);
   output.showResult(d);
+  output.showShiftTest(r.shifts, d.word);
   network.play(acts);
   layers2d.update(acts, maxDiff);
   presenter.showResultCaption();
+  updateSaliency(last, r.windowData, best);
   return d;
+}
+
+/** Saliency for the answer (in the background, so it doesn't delay the result). */
+async function updateSaliency(result, windowData, classIndex) {
+  const token = ++saliencyToken;
+  setSaliencyAvailable(false);
+  try {
+    const sal = await computeSaliency(ctx, windowData, classIndex);
+    if (token !== saliencyToken) return;
+    drawSaliency($('spec-saliency'), sal, ctx.inputShape[1], ctx.inputShape[2]);
+    result.saliency = sal;
+    setSaliencyAvailable(true);
+    applySaliency();
+  } catch (err) {
+    console.error('Saliency failed', err);
+  }
 }
 
 /** Play a backup demo clip out loud, then run it through exactly the same pipeline. */

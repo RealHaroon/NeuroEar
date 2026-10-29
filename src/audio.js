@@ -75,11 +75,36 @@ function fitCanvas(canvas, onResize) {
   ro.observe(canvas);
 }
 
-function createAudioContext() {
-  try {
-    return new AudioContext({ sampleRate: SAMPLE_RATE });
-  } catch {
-    return new AudioContext(); // very old browsers: bins will be slightly off, but it still works
+/**
+ * Streaming linear-interpolation resampler (e.g. 48 kHz → 44.1 kHz). Only used when the browser
+ * won't run a 44.1 kHz audio context with the microphone; the model only looks at 0–5 kHz, far
+ * below where linear interpolation loses accuracy.
+ */
+export class LinearResampler {
+  constructor(fromRate, toRate) {
+    this.step = fromRate / toRate;
+    this.reset();
+  }
+
+  reset() {
+    this.pos = 0; // read position relative to the start of the next chunk (-1 = previous sample)
+    this.prev = 0;
+  }
+
+  process(chunk) {
+    const out = [];
+    const last = chunk.length - 1;
+    let pos = this.pos;
+    while (pos <= last) {
+      const i = Math.floor(pos), f = pos - i;
+      const a = i < 0 ? this.prev : chunk[i];
+      const b = i + 1 <= last ? chunk[i + 1] : chunk[last];
+      out.push(a + (b - a) * f);
+      pos += this.step;
+    }
+    this.pos = pos - chunk.length;
+    this.prev = chunk[last];
+    return Float32Array.from(out);
   }
 }
 
@@ -89,9 +114,21 @@ function createAudioContext() {
  */
 export class Recorder {
   static async create(stream, els, opts) {
-    const ctx = createAudioContext();
-    await ctx.audioWorklet.addModule(workletUrl);
-    return new Recorder(ctx, stream, els, opts);
+    // Prefer a 44.1 kHz context (the model's rate). Some browsers (older Firefox, some Safari)
+    // refuse to connect a microphone running at another rate to it: then use the device's own
+    // rate and resample to 44.1 kHz ourselves.
+    for (const rate of [SAMPLE_RATE, null]) {
+      let ctx;
+      try {
+        ctx = rate ? new AudioContext({ sampleRate: rate }) : new AudioContext();
+        await ctx.audioWorklet.addModule(workletUrl);
+        return new Recorder(ctx, stream, els, opts);
+      } catch (err) {
+        ctx?.close();
+        if (!rate) throw err;
+        console.warn(`44.1 kHz audio context not usable here (${err.message}); resampling instead.`);
+      }
+    }
   }
 
   constructor(ctx, stream, els, { bins, maxSeconds }) {
@@ -108,7 +145,8 @@ export class Recorder {
     src.connect(node).connect(mute).connect(ctx.destination); // must be pulled to run; stays silent
     // Samples are only kept while recording. (The graph itself keeps running: in Chrome, a
     // suspend()/resume() cycle can leave a MediaStream source silent.)
-    node.port.onmessage = (e) => this.recording && this.onChunk(e.data);
+    this.resampler = ctx.sampleRate === SAMPLE_RATE ? null : new LinearResampler(ctx.sampleRate, SAMPLE_RATE);
+    node.port.onmessage = (e) => this.recording && this.onChunk(this.resampler ? this.resampler.process(e.data) : e.data);
 
     // One extra frame of samples: the first spectrum needs 2048 samples.
     this.samples = new Float32Array((this.maxFrames + 1) * FRAME_SIZE);
@@ -136,6 +174,7 @@ export class Recorder {
     this.shown = null;
     this.setWindow(null);
     this.clearSpec(this.maxFrames);
+    this.resampler?.reset();
     this.recording = true;
     await this.ctx.resume();
   }
@@ -285,6 +324,26 @@ export function drawInputHeatmap(canvas, data, frames, bins) {
       img.data[o + 1] = LUT[i + 1];
       img.data[o + 2] = LUT[i + 2];
       img.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+}
+
+/** Saliency overlay for the model-input heatmap: orange → cream, transparent where it didn't matter. */
+export function drawSaliency(canvas, sal, frames, bins) {
+  canvas.width = frames;
+  canvas.height = bins;
+  const g = canvas.getContext('2d');
+  const img = g.createImageData(frames, bins);
+  for (let f = 0; f < frames; f++) {
+    for (let b = 0; b < bins; b++) {
+      const v = sal[f * bins + b];
+      const o = ((bins - 1 - b) * frames + f) * 4;
+      const t = Math.min(1, v * 1.25);
+      img.data[o] = 255;
+      img.data[o + 1] = Math.round(143 + (239 - 143) * t * t);
+      img.data[o + 2] = Math.round(82 + (230 - 82) * t * t);
+      img.data[o + 3] = Math.round(255 * Math.pow(v, 0.8));
     }
   }
   g.putImageData(img, 0, 0);

@@ -1,5 +1,7 @@
 # NeuroEar
 
+Created by [Haroon Khan](https://github.com/RealHaroon).
+
 A browser app that listens to your microphone, recognizes spoken words with a pretrained
 convolutional neural network, and shows how the network processes the sound, layer by layer.
 
@@ -76,7 +78,7 @@ Everything is bundled locally, so no CDN is used:
 | key | action |
 |---|---|
 | **Space** / **Enter** | Record, then Recognize (stops the recording and processes the word) |
-| **→ / ←** | Step through the pipeline one stage at a time (after a result) |
+| **→ / ←** (or a clicker's **PageDown / PageUp**) | Step through the pipeline one stage at a time (after a result) |
 | **Esc** | Leave step mode |
 | **F** | Toggle fullscreen |
 | **R** | Reset the history |
@@ -84,6 +86,7 @@ Everything is bundled locally, so no CDN is used:
 | **D** | Toggle the 2D debug view of every layer, with the verification result |
 | **1–9** | Play backup demo clip 1–9 |
 | **C** | Open or close the calibration panel |
+| **S** | Show or hide the focus map (saliency) on "the image of sound" |
 
 Mouse controls in the 3D view: drag to rotate, scroll to zoom, hover over a layer to see its name,
 type and output shape, and double-click to reset the camera.
@@ -134,6 +137,41 @@ Pool, Flatten, Dropout and Dense layer → Softmax → Prediction. Each step has
    - Dropout appears as a dashed "gate", because it does nothing at inference.
 
    All tensor work runs inside `tf.tidy`, and the downloaded arrays are disposed immediately.
+
+7. **Shift test.** The output panel shows what the network hears when the 1-second window is
+   moved −140, −70, 0, +70 and +140 ms. Green cells agree with the answer and red cells don't. This
+   is the same check that rejects false matches (step 3).
+8. **Focus map (saliency).** Press **S**, click *focus*, or reach the final *Attention* step. The
+   model input is overlaid with how strongly each time-frequency cell affects the score of the
+   network's answer. This is the gradient of that class's raw score (before softmax, which would
+   flatten the gradient at 100 %), averaged over 16 noisy copies of the input (SmoothGrad) and
+   lightly blurred. It is computed in the background after each result.
+
+## Phones and tablets
+
+Below 900 px wide, the panels stack vertically and a bottom bar replaces the keyboard: **Record /
+Recognize**, **◀ ▶** to step through the pipeline, and **focus** for the saliency map. Tap a layer
+in the 3D view to see its details. If a browser can't run 44.1 kHz audio with the microphone
+(older Firefox, some iPhones), the app records at the device's own rate and resamples to 44.1 kHz.
+
+## Deploy on Netlify
+
+`netlify.toml` contains everything Netlify needs: the build command `npm run build`, the publish
+folder `dist`, Node 22, and cache headers for the model files. Netlify serves the site over HTTPS,
+which browsers require for microphone access.
+
+- **From GitHub:** in Netlify, choose *Add new site → Import an existing project*, pick this
+  repository and keep the detected settings. Every push to the chosen branch redeploys the site.
+- **From the command line:** run `npx netlify-cli deploy --prod`. The first run asks you to log in
+  and to link or create a site.
+
+Before you deploy, keep in mind:
+- **Backup clips:** these must be committed in `public/demo/` (record and save them with
+  `npm run dev`). The deployed site can only play clips, not save them.
+- **Calibration:** this is saved per browser *and* per site address, so calibrate again on the
+  deployed URL.
+- **Offline use:** the deployed site needs internet. For an offline presentation, use
+  `npm run preview` locally.
 
 ## Troubleshooting
 
